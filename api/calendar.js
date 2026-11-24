@@ -3,11 +3,14 @@
 //   REDIS_URL                                   -> standard Redis connection (node-redis)
 //   or KV_REST_API_URL + KV_REST_API_TOKEN      -> Upstash REST (also UPSTASH_REDIS_REST_URL/TOKEN)
 // Optional: set FAMCAL_PASSCODE in Vercel to require a passcode (sent as the x-passcode header).
+// Wrong passcodes are rate-limited per IP address: MAX_FAILS wrong guesses -> locked out for LOCK_SECONDS.
 const crypto = require('crypto');
 
 const REST_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const REST_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 const KEY = 'famcal:data';
+const MAX_FAILS = 5;
+const LOCK_SECONDS = 15 * 60;
 
 let client; // reused across invocations while the function instance is warm
 async function tcp() {
@@ -19,32 +22,30 @@ async function tcp() {
   return client;
 }
 
-async function redisGet() {
+// Run one Redis command, e.g. redisCmd(['GET', 'key']).
+async function redisCmd(args) {
   if (REST_URL && REST_TOKEN) {
-    const r = await fetch(REST_URL, { method: 'POST', headers: { Authorization: `Bearer ${REST_TOKEN}` }, body: JSON.stringify(['GET', KEY]) });
+    const r = await fetch(REST_URL, { method: 'POST', headers: { Authorization: `Bearer ${REST_TOKEN}` }, body: JSON.stringify(args) });
     const j = await r.json();
     if (!r.ok || j.error) throw new Error(j.error || `Redis HTTP ${r.status}`);
     return j.result;
   }
-  return (await tcp()).get(KEY);
+  return (await tcp()).sendCommand(args.map(String));
 }
 
-async function redisSet(value) {
-  if (REST_URL && REST_TOKEN) {
-    const r = await fetch(REST_URL, { method: 'POST', headers: { Authorization: `Bearer ${REST_TOKEN}` }, body: JSON.stringify(['SET', KEY, value]) });
-    const j = await r.json();
-    if (!r.ok || j.error) throw new Error(j.error || `Redis HTTP ${r.status}`);
-    return;
-  }
-  await (await tcp()).set(KEY, value);
+function clientIp(req) {
+  const h = req.headers;
+  const raw = h['x-real-ip'] || h['x-vercel-forwarded-for'] || (h['x-forwarded-for'] || '').split(',')[0] || (req.socket && req.socket.remoteAddress) || 'unknown';
+  return String(raw).trim().slice(0, 64);
 }
 
 function passcodeOk(req) {
   const want = process.env.FAMCAL_PASSCODE;
   if (!want) return true;
   const got = String(req.headers['x-passcode'] || '');
-  const a = Buffer.from(got), b = Buffer.from(want);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const a = crypto.createHash('sha256').update(got).digest();
+  const b = crypto.createHash('sha256').update(want).digest();
+  return crypto.timingSafeEqual(a, b);
 }
 
 module.exports = async (req, res) => {
@@ -52,11 +53,32 @@ module.exports = async (req, res) => {
   if (!process.env.REDIS_URL && !(REST_URL && REST_TOKEN)) {
     return res.status(500).json({ error: 'Redis environment variables are missing' });
   }
-  if (!passcodeOk(req)) return res.status(401).json({ error: 'Passcode required' });
+
+  if (process.env.FAMCAL_PASSCODE) {
+    const failKey = `famcal:fails:${clientIp(req)}`;
+    // 1) locked out already?
+    try {
+      const fails = Number(await redisCmd(['GET', failKey])) || 0;
+      if (fails >= MAX_FAILS) {
+        const ttl = Number(await redisCmd(['TTL', failKey])) || LOCK_SECONDS;
+        res.setHeader('Retry-After', String(Math.max(ttl, 1)));
+        return res.status(429).json({ error: 'Too many wrong passcodes. Try again later.', retryAfter: Math.max(ttl, 1) });
+      }
+    } catch (e) { /* if the limiter can't reach Redis, fall through; the passcode check below still applies */ }
+
+    // 2) check the passcode; count failures
+    if (!passcodeOk(req)) {
+      try {
+        const n = Number(await redisCmd(['INCR', failKey]));
+        if (n === 1 || n >= MAX_FAILS) await redisCmd(['EXPIRE', failKey, LOCK_SECONDS]);
+      } catch (e) { /* ignore limiter errors */ }
+      return res.status(401).json({ error: 'Passcode required' });
+    }
+  }
 
   try {
     if (req.method === 'GET') {
-      const raw = await redisGet();
+      const raw = await redisCmd(['GET', KEY]);
       if (!raw) return res.status(200).json({ members: [], events: [], updatedAt: 0 });
       return res.status(200).json(JSON.parse(raw));
     }
@@ -68,7 +90,7 @@ module.exports = async (req, res) => {
       const data = { members: body.members, events: body.events, updatedAt: Date.now() };
       const json = JSON.stringify(data);
       if (json.length > 900000) return res.status(413).json({ error: 'Calendar is too large' });
-      await redisSet(json);
+      await redisCmd(['SET', KEY, json]);
       return res.status(200).json(data);
     }
     res.setHeader('Allow', 'GET, PUT, POST');

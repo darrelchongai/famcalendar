@@ -471,12 +471,15 @@ async function api(method, body){
   if(r.status === 401){
     const p = prompt('Enter the family passcode');
     if(p === null) throw new Error('auth');
-    passcode = p; try{ localStorage.setItem('famcal.pass', p); }catch(e){}
+    passcode = p;
     return api(method, body);
   }
+  if(r.status === 429) throw new Error('locked');
   if(!r.ok) throw new Error('HTTP ' + r.status);
+  try{ localStorage.setItem('famcal.pass', passcode); }catch(e){}   // remember it only once the server accepted it
   return r.json();
 }
+const failMsg = e => e && e.message === 'locked' ? '🔒 Too many wrong passcodes – try again in 15 minutes' : 'Offline – saved on this device';
 function schedulePush(){ if(DEMO) return; pending = true; clearTimeout(pushTimer); pushTimer = setTimeout(push, 400); }
 async function push(){
   if(DEMO) return;
@@ -485,7 +488,7 @@ async function push(){
     const d = await api('PUT', {members, events});
     updatedAt = d.updatedAt; synced = true; pending = false;
     store.set('famcal.synced', true); saveLocal(); setStatus('✓ Shared');
-  }catch(e){ pending = true; setStatus('Offline – saved on this device'); }
+  }catch(e){ pending = true; setStatus(failMsg(e)); }
 }
 function adopt(d){
   members = d.members; events = d.events.map(normalize); updatedAt = d.updatedAt;
@@ -508,7 +511,7 @@ async function pull(){
       if(extra.length) await push();
     }else if(d.updatedAt > updatedAt) adopt(d);
     setStatus('✓ Shared');
-  }catch(e){ setStatus('Offline – saved on this device'); }
+  }catch(e){ setStatus(failMsg(e)); }
 }
 setInterval(pull, 15000);
 document.addEventListener('visibilitychange', () => { if(!document.hidden) pull(); });
