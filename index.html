@@ -506,15 +506,28 @@ let authPromise = null, authResolve = null;
 function setAuthBusy(busy){
   $('aPass').disabled = busy; $('aGo').disabled = busy; $('aGo').textContent = busy ? 'Checking…' : 'Unlock';
 }
-function askPasscode(err){
-  if(authPromise) return authPromise;                    // several requests at once share one window
-  authPromise = new Promise(res => { authResolve = v => { authPromise = null; authResolve = null; res(v); }; });
+function showAuth(err){
   setAuthBusy(false);
   $('aErr').textContent = err || '';
   $('aPass').value = '';
-  if(!$('authDlg').open) $('authDlg').showModal();
-  $('aPass').focus();
-  return authPromise;
+  const dlg = $('authDlg');
+  if(!dlg.open){ try{ dlg.showModal(); }catch(e){ dlg.setAttribute('open', ''); } }
+  try{ $('aPass').focus(); }catch(e){}
+}
+function askPasscode(err){
+  if(authPromise){                                       // several requests at once share one window
+    if(!$('authDlg').open) showAuth(err);                // ...and a window that got closed underneath them is shown again
+    return authPromise;
+  }
+  const p = new Promise(res => { authResolve = v => { authPromise = null; authResolve = null; res(v); }; });
+  authPromise = p;
+  if(typeof $('authDlg').showModal !== 'function'){      // older phones without <dialog> support: plain prompt instead
+    const v = prompt(err || 'Enter the family passcode (you will be asked again after 24 hours):');
+    authResolve(v);                                      // null when cancelled
+    return p;
+  }
+  showAuth(err);
+  return p;
 }
 function closeAuth(){ if($('authDlg').open) $('authDlg').close(); setAuthBusy(false); $('aErr').textContent = ''; }
 function lockAuth(){                                      // too many wrong guesses: say so in the window
@@ -544,13 +557,15 @@ async function api(method, body, passcode){
     if(authDeclined || document.hidden){ if(!authPromise) closeAuth(); throw new Error('auth'); }   // never open the window in a background tab
     const p = await askPasscode(passcode ? 'That passcode was not accepted. Please try again.' : '');
     if(p === null){ authDeclined = true; throw new Error('auth'); }
-    return api(method, body, p);
+    return api(method, body, p || undefined);            // undefined: someone else just signed in, so use that
   }
   if(r.status === 429){ lockAuth(); throw new Error('locked'); }
   if(!r.ok){ if(!authPromise) closeAuth(); throw new Error('HTTP ' + r.status); }
   const s = r.headers.get('X-Session');
   if(s){ session = s; try{ localStorage.setItem('famcal.session', s); }catch(e){} }
-  authDeclined = false; closeAuth();
+  authDeclined = false;
+  if(authResolve) authResolve(undefined);                // anyone still waiting on the window can now just retry with the new sign-in
+  closeAuth();
   document.body.classList.remove('locked'); updateLockBtn();
   return r.json();
 }
