@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Family Calendar – Phone Mock-ups</title>
+<style>
+body{margin:0;background:#e9ebf2;font:14px system-ui,sans-serif;color:#222}
+h1{text-align:center;font-size:20px;margin:20px 0 4px}
+p.sub{text-align:center;color:#666;margin:0 0 20px}
+.section{max-width:1200px;margin:0 auto 30px;padding:0 16px}
+h2{font-size:16px;margin:0 0 10px}
+.row{display:flex;flex-wrap:wrap;gap:30px;justify-content:center}
+.slot{text-align:center}
+.cap{margin-top:8px;color:#555;font-size:12px}
+/* frame is sized to scaled device; inner screen uses real CSS pixels */
+.phone{position:relative;background:#111;border-radius:calc(var(--r)*1px*var(--s));padding:calc(10px*var(--s));
+  width:calc(var(--w)*1px*var(--s));height:calc(var(--h)*1px*var(--s));box-shadow:0 10px 30px rgba(0,0,0,.3);overflow:hidden;box-sizing:content-box}
+.screen{width:calc(var(--w)*1px);height:calc(var(--h)*1px);transform:scale(var(--s));transform-origin:0 0;border-radius:calc((var(--r) - 10)*1px);overflow:hidden;background:#fff;position:relative}
+iframe{border:0;width:100%;height:100%;display:block}
+.island{position:absolute;top:calc(18px*var(--s));left:50%;transform:translateX(-50%);width:calc(100px*var(--s));height:calc(28px*var(--s));background:#000;border-radius:20px;z-index:2}
+.punch{position:absolute;top:calc(20px*var(--s));left:50%;transform:translateX(-50%);width:calc(14px*var(--s));height:calc(14px*var(--s));background:#000;border-radius:50%;z-index:2;box-shadow:0 0 0 2px #222}
+.status{position:absolute;top:0;left:0;right:0;height:44px;z-index:1;pointer-events:none}
+.iphone{--w:393;--h:852;--r:56;--s:.62}
+.galaxy{--w:360;--h:780;--r:38;--s:.68}
+.pad{height:44px}
+</style>
+</head>
+<body>
+<h1>Family Calendar – Phone Mock-ups</h1>
+<p class="sub">Live app (index.html) rendered at each phone's real screen size, with sample events</p>
+
+<div class="section"><h2>iPhone 16 &nbsp;·&nbsp; 393 × 852 pt</h2>
+<div class="row">
+  <div class="slot"><div class="phone iphone"><div class="island"></div><div class="screen"><iframe src="index.html?demo" title="iPhone calendar"></iframe></div></div><div class="cap">Month view + day agenda</div></div>
+  <div class="slot"><div class="phone iphone"><div class="island"></div><div class="screen"><iframe src="index.html?demo&dialog" title="iPhone edit"></iframe></div></div><div class="cap">Edit event</div></div>
+  <div class="slot"><div class="phone iphone"><div class="island"></div><div class="screen"><iframe src="index.html?demo&theme=dark" title="iPhone dark"></iframe></div></div><div class="cap">Dark mode</div></div>
+</div></div>
+
+<div class="section"><h2>Samsung Galaxy S25 &nbsp;·&nbsp; 360 × 780 dp</h2>
+<div class="row">
+  <div class="slot"><div class="phone galaxy"><div class="punch"></div><div class="screen"><iframe src="index.html?demo" title="Galaxy calendar"></iframe></div></div><div class="cap">Month view + day agenda</div></div>
+  <div class="slot"><div class="phone galaxy"><div class="punch"></div><div class="screen"><iframe src="index.html?demo&dialog" title="Galaxy edit"></iframe></div></div><div class="cap">Edit event</div></div>
+  <div class="slot"><div class="phone galaxy"><div class="punch"></div><div class="screen"><iframe src="index.html?demo&theme=dark" title="Galaxy dark"></iframe></div></div><div class="cap">Dark mode</div></div>
+</div></div>
+</body>
+</html>
