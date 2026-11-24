@@ -76,6 +76,7 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
     <button id="exportBtn">Export</button>
     <button id="importBtn">Import</button>
     <button id="themeBtn" aria-label="Toggle dark/light mode"></button>
+    <span id="sync" style="font-size:12px;color:var(--muted)"></span>
     <input type="file" id="importFile" accept="application/json" hidden>
   </div>
   <div class="grid" id="grid"></div>
@@ -180,7 +181,8 @@ function occursOn(e, key){
 let view = new Date(); view.setDate(1);
 let editingId = null;
 var DEMO = /[?&]demo/.test(location.search); // used by mockup.html: sample data, nothing saved
-const save = () => { if(DEMO) return; store.set('famcal.members', members); store.set('famcal.events', events); };
+const saveLocal = () => { if(DEMO) return; store.set('famcal.members', members); store.set('famcal.events', events); store.set('famcal.updatedAt', updatedAt); };
+const save = () => { saveLocal(); schedulePush(); };
 const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const mem = id => members.find(m => m.id === id) || {name:'?',color:'#888'};
 
@@ -367,6 +369,57 @@ $('themeBtn').onclick = () => {
 };
 updateThemeBtn();
 
+// ---- shared sync via /api/calendar (Vercel + Redis); falls back to this device only if the API isn't reachable ----
+var updatedAt = Number(store.get('famcal.updatedAt', 0)), synced = store.get('famcal.synced', false), pending = false, pushTimer = null;
+let passcode = ''; try{ passcode = localStorage.getItem('famcal.pass') || ''; }catch(e){}
+const setStatus = t => { $('sync').textContent = t; };
+async function api(method, body){
+  const r = await fetch('/api/calendar', {method, cache:'no-store', headers:{'Content-Type':'application/json','x-passcode':passcode}, body: body ? JSON.stringify(body) : undefined});
+  if(r.status === 401){
+    const p = prompt('Enter the family passcode');
+    if(p === null) throw new Error('auth');
+    passcode = p; try{ localStorage.setItem('famcal.pass', p); }catch(e){}
+    return api(method, body);
+  }
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function schedulePush(){ if(DEMO) return; pending = true; clearTimeout(pushTimer); pushTimer = setTimeout(push, 400); }
+async function push(){
+  if(DEMO) return;
+  try{
+    setStatus('Saving…');
+    const d = await api('PUT', {members, events});
+    updatedAt = d.updatedAt; synced = true; pending = false;
+    store.set('famcal.synced', true); saveLocal(); setStatus('✓ Shared');
+  }catch(e){ pending = true; setStatus('Offline – saved on this device'); }
+}
+function adopt(d){
+  members = d.members; events = d.events.map(normalize); updatedAt = d.updatedAt;
+  saveLocal();
+  const f = $('fMember').value; fillMembers(); if([...$('fMember').options].some(o => o.value===f)) $('fMember').value = f;
+  render();
+}
+async function pull(){
+  if(DEMO || document.querySelector('dialog[open]')) return;
+  if(pending){ await push(); return; }
+  try{
+    const d = await api('GET');
+    if(!d.updatedAt){ await push(); return; }                 // nothing stored yet: upload this device's data
+    if(!synced){                                               // first sync on this device: keep local-only events too
+      const ids = new Set(d.events.map(e => e.id)), mids = new Set(d.members.map(m => m.id));
+      const extra = events.filter(e => !ids.has(e.id));
+      extra.forEach(e => { if(!mids.has(e.memberId)){ const m = members.find(x => x.id===e.memberId); if(m){ d.members.push(m); mids.add(m.id); } } });
+      d.events = d.events.concat(extra);
+      adopt(d); synced = true; store.set('famcal.synced', true);
+      if(extra.length) await push();
+    }else if(d.updatedAt > updatedAt) adopt(d);
+    setStatus('✓ Shared');
+  }catch(e){ setStatus('Offline – saved on this device'); }
+}
+setInterval(pull, 15000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) pull(); });
+
 if(DEMO){
   document.body.style.paddingTop = '34px'; // room for the phone's status bar / camera cut-out in mockup.html
   const t = iso(new Date()), E = (id,title,off,len,memberId,type,start,end,repeat) => ({id,title,date:addDays(t,off),endDate:addDays(t,off+len),repeat:repeat||'none',until:'',allDay:!start,start:start||'',end:end||'',memberId,type,notes:''});
@@ -377,6 +430,7 @@ if(DEMO){
 }
 buildTimeSelects(); fillMembers(); render(); updateThemeBtn();
 if(DEMO && /dialog/.test(location.search)) openEvent(events[0]);
+pull();
 </script>
 </body>
 </html>
