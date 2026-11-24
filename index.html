@@ -32,7 +32,6 @@ select,input,textarea{background:var(--card);border:1px solid var(--line);border
 .day .n{font-size:12px;color:var(--muted);margin-bottom:2px}
 .day.today .n{color:var(--accent);font-weight:700}
 .ev{font-size:12px;border-radius:4px;padding:1px 5px;margin-bottom:2px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
-.ev.family{outline:2px solid rgba(0,0,0,.25);outline-offset:-2px;font-weight:600}
 dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--text);width:min(440px,92vw);padding:18px}
 dialog::backdrop{background:rgba(0,0,0,.45)}
 label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
@@ -52,7 +51,6 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
   .day{min-height:52px;padding:3px;text-align:center}
   .day .n{font-size:13px}
   .ev{display:inline-block;width:8px;height:8px;padding:0;margin:1px;border-radius:50%;font-size:0;outline:none!important}
-  .ev.family{outline:none;border-radius:2px}
   input,select,textarea{font-size:16px}
   .bar button,.bar select{flex:1 1 auto;min-height:40px}
   dialog{max-height:92vh;overflow:auto}
@@ -73,7 +71,6 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
   </header>
   <div class="bar">
     <select id="fMember"></select>
-    <select id="fType"><option value="">All types</option><option>Personal</option><option>Family</option></select>
     <button id="addBtn" class="primary">+ Add event</button>
     <button id="membersBtn">Family members</button>
     <button id="exportBtn">Export</button>
@@ -89,7 +86,6 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
   <form method="dialog" id="evForm">
     <h2 id="evHead" style="margin:0 0 4px;font-size:17px"></h2>
     <label>Title</label><input id="eTitle" required maxlength="80">
-    <label>Type</label><select id="eType"><option>Personal</option><option>Family</option></select>
     <div class="row"><div><label>Start date</label><input id="eDate" type="date" required></div>
     <div><label>End date</label><input id="eEndDate" type="date" required></div></div>
     <label style="display:flex;gap:6px;align-items:center;color:var(--text);font-size:14px"><input id="eAllDay" type="checkbox" style="width:auto"> All day</label>
@@ -200,22 +196,22 @@ function render(){
   const g = $('grid'); g.innerHTML = '';
   ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d => { const e = document.createElement('div'); e.className='dow'; e.textContent=d; g.appendChild(e); });
   const start = new Date(view); start.setDate(1 - view.getDay());
-  const fm = $('fMember').value, ft = $('fType').value, todayIso = iso(new Date());
+  const fm = $('fMember').value, todayIso = iso(new Date());
   for(let i=0;i<42;i++){
     const d = new Date(start); d.setDate(start.getDate()+i);
     const key = iso(d);
     const cell = document.createElement('div');
     cell.className = 'day' + (d.getMonth()!==view.getMonth()?' other':'') + (key===todayIso?' today':'');
     const n = document.createElement('div'); n.className='n'; n.textContent=d.getDate(); cell.appendChild(n);
-    events.filter(e => occursOn(e,key) && (!fm||e.memberId===fm) && (!ft||e.type===ft))
+    events.filter(e => occursOn(e,key) && (!fm||e.memberId===fm))
       .sort((a,b)=>(a.allDay?'':a.start||'').localeCompare(b.allDay?'':b.start||''))
       .forEach(e => {
         const c = document.createElement('div');
-        c.className = 'ev' + (e.type==='Family'?' family':'');
+        c.className = 'ev';
         c.style.background = mem(e.memberId).color;
         c.textContent = (e.repeat!=='none'?'↻ ':'') + (!e.allDay && e.start? fmt12(e.start)+' ':'') + e.title;
         const when = e.date===e.endDate ? e.date : `${e.date} → ${e.endDate}`;
-        c.title = `${e.title} (${mem(e.memberId).name}, ${e.type})\n${when}` + (e.allDay?' · All day':(e.start?` · ${fmt12(e.start)}${e.end?' – '+fmt12(e.end):''}`:'')) + (e.repeat!=='none'?`\nRepeats ${e.repeat}${e.until?' until '+e.until:''}`:'') + (e.notes?`\n${e.notes}`:'');
+        c.title = `${e.title} (${mem(e.memberId).name})\n${when}` + (e.allDay?' · All day':(e.start?` · ${fmt12(e.start)}${e.end?' – '+fmt12(e.end):''}`:'')) + (e.repeat!=='none'?`\nRepeats ${e.repeat}${e.until?' until '+e.until:''}`:'') + (e.notes?`\n${e.notes}`:'');
         c.onclick = ev => { if(isMobile()) return; ev.stopPropagation(); openEvent(e); };
         cell.appendChild(c);
       });
@@ -230,7 +226,7 @@ const isMobile = () => matchMedia('(max-width:640px)').matches;
 let selDay = iso(new Date());
 function renderAgenda(){
   const a = $('agenda'); a.innerHTML = '';
-  const fm = $('fMember').value, ft = $('fType').value;
+  const fm = $('fMember').value;
   const [y,m,d] = selDay.split('-').map(Number);
   const h = document.createElement('div');
   h.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px';
@@ -239,7 +235,7 @@ function renderAgenda(){
   const add = document.createElement('button'); add.className='primary'; add.textContent='+ Add';
   add.onclick = () => openEvent(null, selDay);
   h.appendChild(add); a.appendChild(h);
-  const list = events.filter(e => occursOn(e,selDay) && (!fm||e.memberId===fm) && (!ft||e.type===ft))
+  const list = events.filter(e => occursOn(e,selDay) && (!fm||e.memberId===fm))
     .sort((p,q)=>(p.allDay?'':p.start||'').localeCompare(q.allDay?'':q.start||''));
   if(!list.length){ const p = document.createElement('div'); p.className='ag-sub'; p.textContent='No events this day.'; a.appendChild(p); }
   list.forEach(e => {
@@ -248,7 +244,7 @@ function renderAgenda(){
     const t = document.createElement('div'); t.style.flex='1';
     const when = e.allDay ? 'All day' : (e.start ? fmt12(e.start)+(e.end?' – '+fmt12(e.end):'') : 'No time');
     const b = document.createElement('div'); b.textContent = (e.repeat!=='none'?'↻ ':'')+e.title;
-    const s = document.createElement('div'); s.className='ag-sub'; s.textContent = `${when} · ${mem(e.memberId).name} · ${e.type}`;
+    const s = document.createElement('div'); s.className='ag-sub'; s.textContent = `${when} · ${mem(e.memberId).name}`;
     t.append(b,s); r.append(dot,t); r.onclick = () => openEvent(e); a.appendChild(r);
   });
 }
@@ -259,7 +255,6 @@ function openEvent(e, date){
   $('eTitle').value = e?.title || '';
   $('eDate').value = e?.date || date || iso(new Date());
   $('eEndDate').value = e?.endDate || $('eDate').value;
-  $('eType').value = e?.type || 'Personal';
   $('eAllDay').checked = !!e?.allDay;
   setTime('eStart', e?.start || '');
   setTime('eEnd', e?.end || '');
@@ -296,7 +291,7 @@ $('eStart').addEventListener('change', () => {
 
 $('evForm').addEventListener('submit', ev => {
   const allDay = $('eAllDay').checked;
-  const data = {title:$('eTitle').value.trim(), date:$('eDate').value, endDate:$('eEndDate').value, type:$('eType').value, allDay,
+  const data = {title:$('eTitle').value.trim(), date:$('eDate').value, endDate:$('eEndDate').value, allDay,
     start:allDay?'':$('eStart').value, end:allDay?'':$('eEnd').value, memberId:$('eMember').value, notes:$('eNotes').value.trim(),
     repeat:$('eRepeat').value, until:$('eRepeat').value==='none' ? '' : $('eUntil').value};
   if(!data.title || !data.date) return;
@@ -340,7 +335,7 @@ $('prev').onclick = () => { view.setMonth(view.getMonth()-1); render(); };
 $('next').onclick = () => { view.setMonth(view.getMonth()+1); render(); };
 $('today').onclick = () => { view = new Date(); view.setDate(1); render(); };
 $('addBtn').onclick = () => openEvent(null);
-$('fMember').onchange = $('fType').onchange = render;
+$('fMember').onchange = render;
 
 $('exportBtn').onclick = () => {
   const a = document.createElement('a');
