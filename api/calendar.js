@@ -39,13 +39,26 @@ function clientIp(req) {
   return String(raw).trim().slice(0, 64);
 }
 
-function passcodeOk(req) {
+function passcodeOk(got) {
   const want = process.env.FAMCAL_PASSCODE;
   if (!want) return true;
-  const got = String(req.headers['x-passcode'] || '');
-  const a = crypto.createHash('sha256').update(got).digest();
+  const a = crypto.createHash('sha256').update(String(got || '')).digest();
   const b = crypto.createHash('sha256').update(want).digest();
   return crypto.timingSafeEqual(a, b);
+}
+
+// Sign-ins last 24 hours from the moment the passcode was entered. The token is "<expiry-ms>.<hmac>",
+// signed with a key derived from the passcode, so changing the passcode also signs everyone out.
+const SESSION_MS = 24 * 60 * 60 * 1000;
+const signKey = () => crypto.createHash('sha256')
+  .update(`famcal-session|${process.env.FAMCAL_PASSCODE}|${process.env.REDIS_URL || REST_TOKEN || ''}`).digest();
+const sign = (exp) => crypto.createHmac('sha256', signKey()).update(String(exp)).digest('hex');
+function makeSession() { const exp = Date.now() + SESSION_MS; return `${exp}.${sign(exp)}`; }
+function sessionOk(token) {
+  const [exp, sig] = String(token || '').split('.');
+  if (!/^\d{10,16}$/.test(exp || '') || !sig || Number(exp) < Date.now()) return false;
+  const a = Buffer.from(sig), b = Buffer.from(sign(exp));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 module.exports = async (req, res) => {
@@ -54,8 +67,9 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Redis environment variables are missing' });
   }
 
-  if (process.env.FAMCAL_PASSCODE) {
+  if (process.env.FAMCAL_PASSCODE && !sessionOk(req.headers['x-session'])) {
     const failKey = `famcal:fails:${clientIp(req)}`;
+    const pass = String(req.headers['x-passcode'] || '');
     // 1) locked out already?
     try {
       const fails = Number(await redisCmd(['GET', failKey])) || 0;
@@ -66,12 +80,17 @@ module.exports = async (req, res) => {
       }
     } catch (e) { /* if the limiter can't reach Redis, fall through; the passcode check below still applies */ }
 
-    // 2) check the passcode; count failures
-    if (!passcodeOk(req)) {
-      try {
-        const n = Number(await redisCmd(['INCR', failKey]));
-        if (n === 1 || n >= MAX_FAILS) await redisCmd(['EXPIRE', failKey, LOCK_SECONDS]);
-      } catch (e) { /* ignore limiter errors */ }
+    // 2) no valid sign-in: accept the passcode (and hand back a 24-hour sign-in), or refuse.
+    //    Only a wrong, non-empty passcode counts as a failed guess (an expired sign-in or a first visit does not).
+    if (pass && passcodeOk(pass)) {
+      res.setHeader('X-Session', makeSession());
+    } else {
+      if (pass) {
+        try {
+          const n = Number(await redisCmd(['INCR', failKey]));
+          if (n === 1 || n >= MAX_FAILS) await redisCmd(['EXPIRE', failKey, LOCK_SECONDS]);
+        } catch (e) { /* ignore limiter errors */ }
+      }
       return res.status(401).json({ error: 'Passcode required' });
     }
   }

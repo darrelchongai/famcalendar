@@ -464,22 +464,33 @@ updateThemeBtn();
 
 // ---- shared sync via /api/calendar (Vercel + Redis); falls back to this device only if the API isn't reachable ----
 var updatedAt = Number(store.get('famcal.updatedAt', 0)), synced = store.get('famcal.synced', false), pending = false, pushTimer = null;
-let passcode = ''; try{ passcode = localStorage.getItem('famcal.pass') || ''; }catch(e){}
+// The passcode is never stored on the device. After it's accepted the server hands back a sign-in token
+// that is valid for 24 hours; when it expires (or the passcode is changed) the passcode is asked for again.
+let session = ''; try{ session = localStorage.getItem('famcal.session') || ''; localStorage.removeItem('famcal.pass'); }catch(e){}
+let authDeclined = false;
+const sessionLive = t => Number(String(t).split('.')[0]) > Date.now();
 const setStatus = t => { $('sync').textContent = t; };
-async function api(method, body){
-  const r = await fetch('/api/calendar', {method, cache:'no-store', headers:{'Content-Type':'application/json','x-passcode':passcode}, body: body ? JSON.stringify(body) : undefined});
+async function api(method, body, passcode){
+  const headers = {'Content-Type':'application/json'};
+  if(passcode) headers['x-passcode'] = passcode; else if(session && sessionLive(session)) headers['x-session'] = session;
+  const r = await fetch('/api/calendar', {method, cache:'no-store', headers, body: body ? JSON.stringify(body) : undefined});
   if(r.status === 401){
-    const p = prompt('Enter the family passcode');
-    if(p === null) throw new Error('auth');
-    passcode = p;
-    return api(method, body);
+    if(authDeclined || document.hidden) throw new Error('auth');       // never pop a prompt in a background tab
+    const p = prompt(passcode ? 'That passcode was not accepted. Enter the family passcode again:' : 'Enter the family passcode (you will be asked again after 24 hours):');
+    if(p === null){ authDeclined = true; throw new Error('auth'); }
+    return api(method, body, p);
   }
   if(r.status === 429) throw new Error('locked');
   if(!r.ok) throw new Error('HTTP ' + r.status);
-  try{ localStorage.setItem('famcal.pass', passcode); }catch(e){}   // remember it only once the server accepted it
+  const s = r.headers.get('X-Session');
+  if(s){ session = s; try{ localStorage.setItem('famcal.session', s); }catch(e){} }
+  authDeclined = false;
   return r.json();
 }
-const failMsg = e => e && e.message === 'locked' ? '🔒 Too many wrong passcodes – try again in 15 minutes' : 'Offline – saved on this device';
+const failMsg = e => e && e.message === 'locked' ? '🔒 Too many wrong passcodes – try again in 15 minutes'
+  : e && e.message === 'auth' ? '🔑 Passcode needed – click here to enter it' : 'Offline – saved on this device';
+$('sync').style.cursor = 'pointer';
+$('sync').onclick = () => { authDeclined = false; pull(); };
 function schedulePush(){ if(DEMO) return; pending = true; clearTimeout(pushTimer); pushTimer = setTimeout(push, 400); }
 async function push(){
   if(DEMO) return;
@@ -514,7 +525,7 @@ async function pull(){
   }catch(e){ setStatus(failMsg(e)); }
 }
 setInterval(pull, 15000);
-document.addEventListener('visibilitychange', () => { if(!document.hidden) pull(); });
+document.addEventListener('visibilitychange', () => { if(!document.hidden){ authDeclined = false; pull(); } });
 
 if(DEMO){
   document.body.style.paddingTop = '34px'; // room for the phone's status bar / camera cut-out in mockup.html
