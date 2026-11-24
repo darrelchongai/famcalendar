@@ -43,18 +43,36 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
 #agenda{display:none}
 #lockedMsg{display:none}
 body.locked .wrap{visibility:hidden}
-/* Sign-in / locked page: the calendar is fully hidden. Put a photo named login-bg.jpg next to index.html to use it as the background. */
-body.locked #lockedMsg{display:flex;position:fixed;inset:0;z-index:1;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff;
-  background:linear-gradient(rgba(0,0,0,.22),rgba(0,0,0,.22)),url('login-bg.jpg') center 30%/cover no-repeat,linear-gradient(135deg,#3b6cf6,#7a4fd6)}
+/* ---- Sign-in / locked page: the calendar is fully hidden behind a balanced layout ----
+   A blurred, dimmed copy of login-bg.jpg fills the screen, the sharp photo sits in a white frame, and the white card sits beside it
+   (wide screens) or below it (phones); photo and card are centred together as one group. A blue-purple gradient shows if the photo is missing. */
+:root{
+  --cw:360px; --gap:44px;                                                        /* card width, space between photo and card */
+  --pw:min(42vw, calc((100vh - 120px)/1.0564));                                  /* photo width, not counting its frame */
+  --gl:max(20px, calc((100vw - var(--pw) - 12px - var(--gap) - var(--cw))/2));   /* left edge of the photo+card pair */
+}
+body.locked #lockedMsg{display:flex;position:fixed;inset:0;z-index:1;isolation:isolate;overflow:hidden;color:#fff;
+  flex-direction:column;align-items:flex-start;justify-content:center;gap:12px;
+  padding-left:calc(var(--gl) + var(--pw) + 12px + var(--gap));background:linear-gradient(135deg,#3b6cf6,#7a4fd6)}
+body.locked #lockedMsg::before{content:'';position:absolute;inset:-40px;z-index:-1;
+  background:linear-gradient(rgba(10,10,40,.5),rgba(10,10,40,.5)),url('login-bg.jpg') center/cover no-repeat;filter:blur(26px)}
+#lockedFrame{display:none}
+body.locked #lockedFrame{display:block;position:fixed;z-index:2;top:50%;left:var(--gl);width:calc(var(--pw) + 12px);transform:translateY(-50%);
+  border:6px solid #fff;border-radius:14px;overflow:hidden;background:#222;box-shadow:0 14px 44px rgba(0,0,0,.5)}
+#lockedFrame img{display:block;width:100%;height:auto}
 body.auth-open #lockedMsg > *{visibility:hidden}
-#authDlg::backdrop{background:rgba(0,0,0,.1)}
-#authDlg{margin-top:auto;margin-bottom:6vh}   /* sits in the lower part so the photo's faces stay visible above it */
-/* translucent "frosted glass" card (solid colour first, as a fallback for browsers without color-mix) */
-#authDlg{background:var(--card);background:color-mix(in srgb,var(--card) 36%,transparent);-webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);border:1px solid rgba(255,255,255,.45)}
-#authDlg .auth-title,#authDlg .auth-sub,#authDlg label{color:var(--text);font-weight:500;text-shadow:0 0 6px color-mix(in srgb,var(--card) 70%,transparent)}
-#authDlg #aPass{background:color-mix(in srgb,var(--card) 55%,transparent)}
-#authDlg .actions button:not(.primary){background:color-mix(in srgb,var(--card) 55%,transparent)}
-@media(min-width:900px){#authDlg{margin-left:6vw;margin-right:auto}}   /* on wide screens: lower-left corner, clear of the faces */
+#authDlg::backdrop{background:transparent}
+#authDlg{width:var(--cw);margin:auto auto auto calc(var(--gl) + var(--pw) + 12px + var(--gap));
+  background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:0 16px 48px rgba(0,0,0,.4)}
+/* phones (tall, narrow screens): the photo across the top, fading into a white page, with the white card low on the screen */
+@media(max-aspect-ratio:3/4){
+  body.locked #lockedMsg{align-items:center;padding-left:0;padding-top:calc(100vw*1.0564);color:var(--text);
+    background:linear-gradient(to bottom,transparent calc(100vw*1.0564 - 130px),var(--card) calc(100vw*1.0564)),
+      url('login-bg.jpg') center top/100% auto no-repeat,var(--card)}
+  body.locked #lockedMsg::before{display:none}
+  body.locked #lockedFrame{display:none}
+  #authDlg{width:min(440px,calc(100vw - 32px));margin:auto auto max(24px,7vh) auto;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+}
 .auth-title{font-size:19px;margin:0 0 6px;display:flex;gap:8px;align-items:center}
 .auth-sub{margin:0 0 4px;color:var(--muted);font-size:14px}
 .auth-show{display:flex;gap:6px;align-items:center;font-size:13px;margin:8px 0 0;cursor:pointer}
@@ -138,6 +156,8 @@ body.auth-open #lockedMsg > *{visibility:hidden}
   <div style="font-weight:600;font-size:18px">Locked</div>
   <button id="unlockBtn" class="primary">Unlock</button>
 </div>
+
+<div id="lockedFrame" aria-hidden="true"><img src="login-bg.jpg" alt=""></div>
 
 <dialog id="authDlg" aria-labelledby="authTitle">
   <form id="authForm" autocomplete="on">
