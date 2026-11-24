@@ -41,6 +41,15 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
 .mrow{display:flex;gap:6px;margin-bottom:6px;align-items:center}
 .mrow input[type=color]{width:44px;padding:2px;height:34px;flex:none}
 #agenda{display:none}
+#lockedMsg{display:none}
+body.locked .wrap{visibility:hidden}
+body.locked #lockedMsg{display:flex;position:fixed;inset:0;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+.auth-title{font-size:19px;margin:0 0 6px;display:flex;gap:8px;align-items:center}
+.auth-sub{margin:0 0 4px;color:var(--muted);font-size:14px}
+.auth-show{display:flex;gap:6px;align-items:center;font-size:13px;margin:8px 0 0;cursor:pointer}
+.auth-show input{width:auto}
+#aErr{color:#e5484d;font-size:13px;min-height:18px;margin-top:8px}
+#aPass{font-size:18px;letter-spacing:.05em}
 .ev.clash{box-shadow:0 0 0 2px #e5484d}
 #conflicts{display:none;margin-bottom:12px;border:1px solid #e5484d;border-radius:10px;background:rgba(229,72,77,.12);overflow:hidden}
 .conf-head{display:block;width:100%;text-align:left;border:0;border-radius:0;background:transparent;font-weight:600;padding:8px 12px}
@@ -81,6 +90,7 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
     <button id="exportBtn">Export</button>
     <button id="importBtn">Import</button>
     <button id="themeBtn" aria-label="Toggle dark/light mode"></button>
+    <button id="lockBtn" style="display:none" title="Sign out of this device now">🔒 Lock</button>
     <span id="sync" style="font-size:12px;color:var(--muted)"></span>
     <input type="file" id="importFile" accept="application/json" hidden>
   </div>
@@ -108,6 +118,27 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
       <button type="button" id="eDel" class="danger">Delete</button><span class="sp"></span>
       <button type="button" id="eCancel">Cancel</button>
       <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="lockedMsg" role="status">
+  <div style="font-size:44px" aria-hidden="true">🔒</div>
+  <div style="font-weight:600;font-size:18px">Locked</div>
+  <button id="unlockBtn" class="primary">Unlock</button>
+</div>
+
+<dialog id="authDlg" aria-labelledby="authTitle">
+  <form id="authForm" autocomplete="on">
+    <h2 id="authTitle" class="auth-title"><span aria-hidden="true">🔒</span> CHONG Family Calendar</h2>
+    <p class="auth-sub">Enter the family passcode to open the calendar. You'll be asked again after 24 hours.</p>
+    <label for="aPass">Passcode</label>
+    <input id="aPass" name="passcode" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false" aria-describedby="aErr">
+    <label class="auth-show"><input id="aShow" type="checkbox"> Show passcode</label>
+    <div id="aErr" role="alert"></div>
+    <div class="actions">
+      <button type="button" id="aCancel">Not now</button>
+      <button type="submit" id="aGo" class="primary">Unlock</button>
     </div>
   </form>
 </dialog>
@@ -470,23 +501,76 @@ let session = ''; try{ session = localStorage.getItem('famcal.session') || ''; l
 let authDeclined = false;
 const sessionLive = t => Number(String(t).split('.')[0]) > Date.now();
 const setStatus = t => { $('sync').textContent = t; };
+// ---- sign-in window (replaces the browser's plain prompt) ----
+let authPromise = null, authResolve = null;
+function setAuthBusy(busy){
+  $('aPass').disabled = busy; $('aGo').disabled = busy; $('aGo').textContent = busy ? 'Checking…' : 'Unlock';
+}
+function askPasscode(err){
+  if(authPromise) return authPromise;                    // several requests at once share one window
+  authPromise = new Promise(res => { authResolve = v => { authPromise = null; authResolve = null; res(v); }; });
+  setAuthBusy(false);
+  $('aErr').textContent = err || '';
+  $('aPass').value = '';
+  if(!$('authDlg').open) $('authDlg').showModal();
+  $('aPass').focus();
+  return authPromise;
+}
+function closeAuth(){ if($('authDlg').open) $('authDlg').close(); setAuthBusy(false); $('aErr').textContent = ''; }
+function lockAuth(){                                      // too many wrong guesses: say so in the window
+  if(!$('authDlg').open) return;
+  $('aErr').textContent = '🔒 Too many wrong passcodes. Please try again in 15 minutes.';
+  $('aPass').value = ''; $('aPass').disabled = true; $('aGo').disabled = true; $('aGo').textContent = 'Locked';
+}
+$('authForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = $('aPass').value;
+  if(!v){ $('aErr').textContent = 'Please enter the passcode.'; $('aPass').focus(); return; }
+  if(authResolve){ setAuthBusy(true); $('aErr').textContent = ''; authResolve(v); }
+});
+const cancelAuth = () => { if(authResolve) authResolve(null); closeAuth(); };
+$('aCancel').onclick = cancelAuth;
+$('authDlg').addEventListener('cancel', e => { e.preventDefault(); cancelAuth(); });
+$('aShow').onchange = () => { $('aPass').type = $('aShow').checked ? 'text' : 'password'; };
+$('authDlg').addEventListener('close', () => { $('aShow').checked = false; $('aPass').type = 'password'; });
+
 async function api(method, body, passcode){
   const headers = {'Content-Type':'application/json'};
   if(passcode) headers['x-passcode'] = passcode; else if(session && sessionLive(session)) headers['x-session'] = session;
-  const r = await fetch('/api/calendar', {method, cache:'no-store', headers, body: body ? JSON.stringify(body) : undefined});
+  let r;
+  try{ r = await fetch('/api/calendar', {method, cache:'no-store', headers, body: body ? JSON.stringify(body) : undefined}); }
+  catch(e){ if(!authPromise) closeAuth(); throw e; }               // a failed background request must not close a window someone is typing in
   if(r.status === 401){
-    if(authDeclined || document.hidden) throw new Error('auth');       // never pop a prompt in a background tab
-    const p = prompt(passcode ? 'That passcode was not accepted. Enter the family passcode again:' : 'Enter the family passcode (you will be asked again after 24 hours):');
+    if(authDeclined || document.hidden){ if(!authPromise) closeAuth(); throw new Error('auth'); }   // never open the window in a background tab
+    const p = await askPasscode(passcode ? 'That passcode was not accepted. Please try again.' : '');
     if(p === null){ authDeclined = true; throw new Error('auth'); }
     return api(method, body, p);
   }
-  if(r.status === 429) throw new Error('locked');
-  if(!r.ok) throw new Error('HTTP ' + r.status);
+  if(r.status === 429){ lockAuth(); throw new Error('locked'); }
+  if(!r.ok){ if(!authPromise) closeAuth(); throw new Error('HTTP ' + r.status); }
   const s = r.headers.get('X-Session');
   if(s){ session = s; try{ localStorage.setItem('famcal.session', s); }catch(e){} }
-  authDeclined = false;
+  authDeclined = false; closeAuth();
+  document.body.classList.remove('locked'); updateLockBtn();
   return r.json();
 }
+
+// ---- Lock button + auto-lock after 15 minutes without use ----
+const IDLE_MS = 15 * 60 * 1000;
+let lastActive = Date.now();
+const idleExpired = () => Date.now() - lastActive >= IDLE_MS;
+function updateLockBtn(){ $('lockBtn').style.display = (session && sessionLive(session)) ? '' : 'none'; }
+function lockNow(){
+  session = ''; try{ localStorage.removeItem('famcal.session'); }catch(e){}
+  document.querySelectorAll('dialog[open]').forEach(d => { if(d.id !== 'authDlg') d.close(); });
+  document.body.classList.add('locked'); updateLockBtn();
+  authDeclined = false; lastActive = Date.now();
+  pull();                                   // no sign-in any more, so this opens the passcode window
+}
+$('lockBtn').onclick = lockNow;
+$('unlockBtn').onclick = () => { authDeclined = false; pull(); };
+['pointerdown','keydown','touchstart','scroll'].forEach(ev => addEventListener(ev, () => { if(!document.body.classList.contains('locked')) lastActive = Date.now(); }, {passive:true}));
+setInterval(() => { if(session && sessionLive(session) && idleExpired()) lockNow(); }, 30000);
 const failMsg = e => e && e.message === 'locked' ? '🔒 Too many wrong passcodes – try again in 15 minutes'
   : e && e.message === 'auth' ? '🔑 Passcode needed – click here to enter it' : 'Offline – saved on this device';
 $('sync').style.cursor = 'pointer';
@@ -525,7 +609,12 @@ async function pull(){
   }catch(e){ setStatus(failMsg(e)); }
 }
 setInterval(pull, 15000);
-document.addEventListener('visibilitychange', () => { if(!document.hidden){ authDeclined = false; pull(); } });
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden) return;
+  if(session && sessionLive(session) && idleExpired()){ lockNow(); return; }
+  authDeclined = false; pull();
+});
+updateLockBtn();
 
 if(DEMO){
   document.body.style.paddingTop = '34px'; // room for the phone's status bar / camera cut-out in mockup.html
