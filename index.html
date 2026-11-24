@@ -41,6 +41,7 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
 .mrow{display:flex;gap:6px;margin-bottom:6px;align-items:center}
 .mrow input[type=color]{width:44px;padding:2px;height:34px;flex:none}
 #agenda{display:none}
+.ev.clash{box-shadow:0 0 0 2px #e5484d}
 .day.sel{box-shadow:inset 0 0 0 2px var(--accent)}
 .ag-item{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:6px;cursor:pointer}
 .ag-dot{width:12px;height:12px;border-radius:50%;flex:none}
@@ -95,6 +96,7 @@ label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
     <div class="row"><div><label>Repeat</label><select id="eRepeat"><option value="none">Does not repeat</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
     <div id="untilWrap"><label>Repeat until (optional)</label><input id="eUntil" type="date"></div></div>
     <div id="repNote" style="font-size:12px;color:var(--muted);margin-top:4px;display:none">Editing or deleting changes the whole repeating series.</div>
+    <div id="conflict" role="alert" style="display:none;margin-top:10px;padding:8px 10px;border:1px solid #e5484d;border-radius:8px;background:rgba(229,72,77,.12);font-size:13px"></div>
     <label>Family member</label><select id="eMember"></select>
     <label>Notes</label><textarea id="eNotes" rows="3"></textarea>
     <div class="actions">
@@ -193,6 +195,52 @@ function fillMembers(){
   [...$('eMember').options, ...[...$('fMember').options].slice(1)].forEach(o => o.textContent = mem(o.value).name);
 }
 
+// ---- conflict detection: overlapping times for the same person (or anything involving "Everyone") ----
+function interval(e){
+  if(e.allDay || !e.start || e.date!==e.endDate) return [0,1440];
+  const s = toMin(e.start); return [s, e.end ? toMin(e.end) : s+60];
+}
+function clash(a,b){
+  if(!(a.memberId===b.memberId || a.memberId==='all' || b.memberId==='all')) return false;
+  const [a0,a1] = interval(a), [b0,b1] = interval(b);
+  return a0 < b1 && b0 < a1;
+}
+function clashIds(list){
+  const s = new Set();
+  for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++) if(clash(list[i],list[j])){ s.add(list[i].id); s.add(list[j].id); }
+  return s;
+}
+function findConflicts(d, ignoreId){   // d = draft event; returns up to 5 {e, day}
+  const found = new Map();
+  const limit = d.repeat==='none' ? d.endDate : addDays(d.date, 366);
+  for(let k=d.date; k<=limit && found.size<5; k=addDays(k,1)){
+    if(!occursOn(d,k)) continue;
+    for(const e of events) if(e.id!==ignoreId && !found.has(e.id) && occursOn(e,k) && clash(d,e)) found.set(e.id,{e,day:k});
+  }
+  return [...found.values()];
+}
+function draft(){
+  const allDay = $('eAllDay').checked, rep = $('eRepeat').value;
+  const d = {date:$('eDate').value, endDate:$('eEndDate').value, allDay, start:allDay?'':$('eStart').value, end:allDay?'':$('eEnd').value,
+    memberId:$('eMember').value, repeat:rep, until:rep==='none'?'':$('eUntil').value};
+  if(!d.date) return null;
+  if(!d.endDate || d.endDate < d.date) d.endDate = d.date;
+  return d;
+}
+function showConflicts(){
+  const box = $('conflict'), d = draft(), list = d ? findConflicts(d, editingId) : [];
+  box.innerHTML = '';
+  if(!list.length){ box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const h = document.createElement('strong'); h.textContent = '⚠ This overlaps with an existing event:'; box.appendChild(h);
+  list.forEach(({e,day}) => {
+    const line = document.createElement('div');
+    const when = e.allDay ? 'all day' : (e.start ? fmt12(e.start)+(e.end?' – '+fmt12(e.end):'') : 'no time');
+    line.textContent = `${e.title} (${mem(e.memberId).name}) · ${day} · ${when}`;
+    box.appendChild(line);
+  });
+}
+
 function render(){
   $('title').textContent = view.toLocaleString(undefined,{month:'long',year:'numeric'});
   const g = $('grid'); g.innerHTML = '';
@@ -205,13 +253,14 @@ function render(){
     const cell = document.createElement('div');
     cell.className = 'day' + (d.getMonth()!==view.getMonth()?' other':'') + (key===todayIso?' today':'');
     const n = document.createElement('div'); n.className='n'; n.textContent=d.getDate(); cell.appendChild(n);
-    events.filter(e => occursOn(e,key) && (!fm||e.memberId===fm))
+    const dayAll = events.filter(e => occursOn(e,key)), clashing = clashIds(dayAll);
+    dayAll.filter(e => !fm||e.memberId===fm)
       .sort((a,b)=>(a.allDay?'':a.start||'').localeCompare(b.allDay?'':b.start||''))
       .forEach(e => {
         const c = document.createElement('div');
-        c.className = 'ev';
+        c.className = 'ev' + (clashing.has(e.id)?' clash':'');
         c.style.background = mem(e.memberId).color;
-        c.textContent = (e.repeat!=='none'?'↻ ':'') + (!e.allDay && e.start? fmt12(e.start)+' ':'') + e.title;
+        c.textContent = (clashing.has(e.id)?'⚠ ':'') + (e.repeat!=='none'?'↻ ':'') + (!e.allDay && e.start? fmt12(e.start)+' ':'') + e.title;
         const when = e.date===e.endDate ? e.date : `${e.date} → ${e.endDate}`;
         c.title = `${e.title} (${mem(e.memberId).name})\n${when}` + (e.allDay?' · All day':(e.start?` · ${fmt12(e.start)}${e.end?' – '+fmt12(e.end):''}`:'')) + (e.repeat!=='none'?`\nRepeats ${e.repeat}${e.until?' until '+e.until:''}`:'') + (e.notes?`\n${e.notes}`:'');
         c.onclick = ev => { if(isMobile()) return; ev.stopPropagation(); openEvent(e); };
@@ -237,7 +286,8 @@ function renderAgenda(){
   const add = document.createElement('button'); add.className='primary'; add.textContent='+ Add';
   add.onclick = () => openEvent(null, selDay);
   h.appendChild(add); a.appendChild(h);
-  const list = events.filter(e => occursOn(e,selDay) && (!fm||e.memberId===fm))
+  const dayAll = events.filter(e => occursOn(e,selDay)), clashing = clashIds(dayAll);
+  const list = dayAll.filter(e => !fm||e.memberId===fm)
     .sort((p,q)=>(p.allDay?'':p.start||'').localeCompare(q.allDay?'':q.start||''));
   if(!list.length){ const p = document.createElement('div'); p.className='ag-sub'; p.textContent='No events this day.'; a.appendChild(p); }
   list.forEach(e => {
@@ -245,8 +295,10 @@ function renderAgenda(){
     const dot = document.createElement('span'); dot.className='ag-dot'; dot.style.background = mem(e.memberId).color;
     const t = document.createElement('div'); t.style.flex='1';
     const when = e.allDay ? 'All day' : (e.start ? fmt12(e.start)+(e.end?' – '+fmt12(e.end):'') : 'No time');
-    const b = document.createElement('div'); b.textContent = (e.repeat!=='none'?'↻ ':'')+e.title;
-    const s = document.createElement('div'); s.className='ag-sub'; s.textContent = `${when} · ${mem(e.memberId).name}`;
+    const clash = clashing.has(e.id);
+    const b = document.createElement('div'); b.textContent = (clash?'⚠ ':'')+(e.repeat!=='none'?'↻ ':'')+e.title;
+    const s = document.createElement('div'); s.className='ag-sub'; s.textContent = `${when} · ${mem(e.memberId).name}` + (clash?' · Conflict':'');
+    if(clash) s.style.color = '#e5484d';
     t.append(b,s); r.append(dot,t); r.onclick = () => openEvent(e); a.appendChild(r);
   });
 }
@@ -266,6 +318,7 @@ function openEvent(e, date){
   $('eMember').value = e?.memberId || members[0]?.id;
   $('eNotes').value = e?.notes || '';
   $('eDel').style.display = e ? '' : 'none';
+  showConflicts();
   $('evDlg').showModal();
 }
 
@@ -280,6 +333,8 @@ function syncRepeat(){
   $('repNote').style.display = (r && editingId) ? 'block' : 'none';
 }
 $('eRepeat').onchange = syncRepeat;
+$('evForm').addEventListener('input', showConflicts);
+$('evForm').addEventListener('change', showConflicts);
 // picking a start time auto-fills / shifts the end time (keeps duration, default 1 hour)
 let prevStart = '';
 $('eStart').addEventListener('focus', () => prevStart = $('eStart').value);
