@@ -50,9 +50,10 @@ body.auth-open #lockedMsg > *{visibility:hidden}
 #authDlg::backdrop{background:rgba(0,0,0,.1)}
 #authDlg{margin-top:auto;margin-bottom:6vh}   /* sits in the lower part so the photo's faces stay visible above it */
 /* translucent "frosted glass" card (solid colour first, as a fallback for browsers without color-mix) */
-#authDlg{background:var(--card);background:color-mix(in srgb,var(--card) 66%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.4)}
-#authDlg .auth-sub,#authDlg label{color:var(--text)}
-#authDlg #aPass{background:color-mix(in srgb,var(--card) 80%,transparent)}
+#authDlg{background:var(--card);background:color-mix(in srgb,var(--card) 36%,transparent);-webkit-backdrop-filter:blur(18px) saturate(1.2);backdrop-filter:blur(18px) saturate(1.2);border:1px solid rgba(255,255,255,.45)}
+#authDlg .auth-title,#authDlg .auth-sub,#authDlg label{color:var(--text);font-weight:500;text-shadow:0 0 6px color-mix(in srgb,var(--card) 70%,transparent)}
+#authDlg #aPass{background:color-mix(in srgb,var(--card) 55%,transparent)}
+#authDlg .actions button:not(.primary){background:color-mix(in srgb,var(--card) 55%,transparent)}
 @media(min-width:900px){#authDlg{margin-left:6vw;margin-right:auto}}   /* on wide screens: lower-left corner, clear of the faces */
 .auth-title{font-size:19px;margin:0 0 6px;display:flex;gap:8px;align-items:center}
 .auth-sub{margin:0 0 4px;color:var(--muted);font-size:14px}
